@@ -1,0 +1,5 @@
+vindr/csv/
+data-vindr/
+data-vindr_mask/
+
+vindr/__pycache__/
