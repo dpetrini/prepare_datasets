@@ -18,6 +18,8 @@
 #  -processar os malign (precisa assim os 2 tipos), fazendo 10 arquivos (n=10)
 #  python3 vindr-select-data.py -f './csv/vindr-mammo/breast-level_annotations.csv' -a m -o './data-vindr' -n 10
 #
+#  -process chest files (many corrupted in kaggle dataset download ??)
+#  python3 vindr_select_data.py -f './csv/vindr-mammo/train.csv' -a m -o './data-vindr' -n 20  (only 12 ok)
 #
 # DGPP - 31/08/2022 - Initial version for Unet studies (patches)
 #        18/09/2022 - Adicionado pre-processamento (process.ipynb) & multiProcess
@@ -38,8 +40,10 @@ import cv2
 from process_image import data_preprocess
 
 # indicate here where dataset is
-TOP_VINDR = '/media/dpetrini/DISK041/datasets/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/images'
-    
+# TOP_VINDR = '/media/dpetrini/DISK041/datasets/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/images'
+TOP_VINDR = '/media/dpetrini/DISK041/datasets/vinbigdata-chest-xray-abnormalities-detection/train'
+
+TYPE = 'CHEST'  # 'CHEST' 'MAMMO' 
 
 # for multiprocess
 NUM_PROCESSES = 6          # 4 funcionou bem, talvez 6 se desligar browser
@@ -86,16 +90,26 @@ def resize_expand_channels(img_file, expand=True):
 def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True):
     """ Convert image to dicom and prepare for dataloaders """
 
-    if file_list[sel]['short_case_id'] == 'dbca9d28b' and file_list[sel]['side'] == 'L':
-        print('Anomalia VINDR (2x L-CC). Skipping: ', file_list[sel])
-        return
+    side = None
 
-    image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
-    split = 'train' if file_list[sel]['split']=='training' else 'test'
-    dir_destiny = os.path.join(save_path, split, file_list[sel]['type'])
-    image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
-                 file_list[sel]['view']+'_B'+file_list[sel]['birads']+ \
-                 '_D'+file_list[sel]['density']+'.png'
+    if TYPE == 'MAMMO':
+        if file_list[sel]['short_case_id'] == 'dbca9d28b' and file_list[sel]['side'] == 'L':
+            print('Anomalia VINDR (2x L-CC). Skipping: ', file_list[sel])
+            return
+
+        image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
+        split = 'train' if file_list[sel]['split']=='training' else 'test'
+        dir_destiny = os.path.join(save_path, split, file_list[sel]['type'])
+        image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
+                    file_list[sel]['view']+'_B'+file_list[sel]['birads']+ \
+                    '_D'+file_list[sel]['density']+'.png'
+        side = file_list[sel]['side']
+    elif TYPE == 'CHEST':
+        image_source = (os.path.join(TOP_VINDR, file_list[sel]['image_id']))+'.dicom'
+        split = 'train'     # always in this case
+        dir_destiny = os.path.join(save_path, split, file_list[sel]['type'])
+        image_name = file_list[sel]['image_id']+'.png'
+
     destiny_path = os.path.join(dir_destiny, image_name)
     print(destiny_path)
 
@@ -105,7 +119,7 @@ def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True):
         return
 
     try:
-        save_dicom_image_as_png(image_source, destiny_path, file_list[sel]['side'] ,16)
+        save_dicom_image_as_png(image_source, destiny_path, side, 16)
         if resize_expand:
             resize_expand_channels(destiny_path, False)
     except:
@@ -175,8 +189,11 @@ def main():
         elif args['abnormality'] == 'm':
             abnormality = 'MALIGNANT'
             print('Selecting Malignant exams from file ', args['file'])
+        elif args['abnormality'] == 'a':
+            print('Selecting ALL exams from file ', args['file'])
+            abnormality = 'ALL'
         else:
-            print('Abnormality must be b or m')
+            print('Abnormality must be b, m or a')
             sys.exit()
 
     # read to pandas frame
@@ -184,30 +201,60 @@ def main():
     # transforma em np para manipular
     table = np.array(df)
 
+    print(len(table), table)
+
     file_list = []
 
     # Following lines filter what we want. Hardcoded now- -CRIE SUA SELECAO AQUI
     count = 0
     for i in range(table.shape[0]):
-        if abnormality == 'MALIGNANT':
-            if table[i][7] == 'BI-RADS 3' or table[i][7] == 'BI-RADS 4' or table[i][7] == 'BI-RADS 5':
-                file_list.append({'dir': table[i][0], 'file': table[i][2],
-                                'birads': str(table[i][7])[-1],
-                                'density': table[i][8][-1],
-                                'side': table[i][3], 'view': table[i][4],
-                                'split': table[i][9],
-                                'short_case_id':  table[i][0][0:9],
-                                'type': 'malign'})
-                count = count+1
-        elif abnormality == 'BENIGN':
-            if table[i][7] == 'BI-RADS 1' or table[i][7] == 'BI-RADS 2':
-                file_list.append({'dir': table[i][0], 'file': table[i][2],
-                                'birads': str(table[i][7])[-1],
-                                'density': table[i][8][-1],
-                                'side': table[i][3], 'view': table[i][4],
-                                'split': table[i][9],
-                                'short_case_id':  table[i][0][0:9],
-                                'type': 'benign'})
+        if TYPE == 'MAMMO':
+            if abnormality == 'MALIGNANT':
+                if table[i][7] == 'BI-RADS 3' or table[i][7] == 'BI-RADS 4' or table[i][7] == 'BI-RADS 5':
+                    file_list.append({'dir': table[i][0], 'file': table[i][2],
+                                    'birads': str(table[i][7])[-1],
+                                    'density': table[i][8][-1],
+                                    'side': table[i][3], 'view': table[i][4],
+                                    'split': table[i][9],
+                                    'short_case_id':  table[i][0][0:9],
+                                    'type': 'malign'})
+                    count = count+1
+            elif abnormality == 'BENIGN':
+                if table[i][7] == 'BI-RADS 1' or table[i][7] == 'BI-RADS 2':
+                    file_list.append({'dir': table[i][0], 'file': table[i][2],
+                                    'birads': str(table[i][7])[-1],
+                                    'density': table[i][8][-1],
+                                    'side': table[i][3], 'view': table[i][4],
+                                    'split': table[i][9],
+                                    'short_case_id':  table[i][0][0:9],
+                                    'type': 'benign'})
+                    count = count+1
+        elif TYPE == 'CHEST':               # all train here
+            if abnormality == 'MALIGNANT':
+                if table[i][1] != 'No finding':
+                    file_list.append({'image_id': table[i][0],
+                                    'class_name': table[i][1],
+                                    'class_id': table[i][2],
+                                    'rad_id': table[i][3],
+                                    'xmin': float(table[i][4]),
+                                    'ymin': float(table[i][5]),
+                                    'xmax': float(table[i][6]),
+                                    'ymax': float(table[i][7]),
+                                    'type': 'malign'})
+                    count = count+1
+            if abnormality == 'BENIGN':
+                if table[i][1] == 'No finding':
+                    file_list.append({'image_id': table[i][0],
+                                    'class_name': table[i][1],
+                                    'class_id': table[i][2],
+                                    'rad_id': table[i][3],
+                                    'type': 'benign'})
+                    count = count+1
+            if abnormality == 'ALL':
+                file_list.append({'image_id': table[i][0],
+                                'class_name': table[i][1],
+                                'class_id': table[i][2],
+                                'rad_id': table[i][3]})
                 count = count+1
 
     print('Current selection (all): ', count, len(file_list))

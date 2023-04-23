@@ -12,6 +12,12 @@
 #  -processar os malign (precisa assim os 2 tipos)
 #   python3 vindr-select-data_patch.py -f './csv/vindr-mammo/finding_annotations.csv' -a m -o './data-vindr-patch' -n 0
 #
+#  -For Self Supervised (No labels): use(-a a)
+#   python3 vindr_select_data_patch.py -f './csv/vindr-mammo/train.csv' -a a -o './data-vindr-patch' -n 50
+#
+#   - For SSL - now supporting different patch size
+#    python3 vindr_select_data_patch.py -f './csv/vindr-mammo/finding_annotations.csv' -o './data-vindr' -a a -s 112 -n 50
+#
 #
 # DGPP - Nov/2022 - Created file based in CBIS S10 process. Core refactor - separate patch only routines
 
@@ -33,11 +39,19 @@ from vindr_select_data import save_dicom_image_as_png
 # for multiprocess
 NUM_PROCESSES = 6          # 4 funcionou bem, talvez 6 se desligar browser
 DEFAULT_SIZE = (896, 1152)
+
 RESIZE_EXPAND_CHANNELS = True
 NON_BLACK_LIMIT = 0  # 1000 # limite superior de pixels pretos para background
 
+TYPE = 'MAMMO'  # 'CHEST' 'MAMMO' 
+
 # indicate here where dataset is
-TOP_VINDR = '/media/dpetrini/DISK041/datasets/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/images'
+if TYPE == 'MAMMO':
+    TOP_VINDR = '/media/dpetrini/DISK041/datasets/vindr-mammo-a-large-scale-benchmark-dataset-for-computer-aided-detection-and-diagnosis-in-full-field-digital-mammography-1.0.0/images'
+elif TYPE == 'CHEST':
+    TOP_VINDR = '/media/dpetrini/DISK041/datasets/vinbigdata-chest-xray-abnormalities-detection/train'
+
+
 sufix = random.randint(1,200)
 TEMP_DIR = './'+str(sufix)
 
@@ -86,8 +100,8 @@ def prepare_category_sufix(finding):
 ap = argparse.ArgumentParser(description='Convert ddsm csv in NYU label format.')
 ap.add_argument("-f", "--file",  required=True,
                 help="csv file to convert.")
-ap.add_argument("-p", "--path", required=False,
-                help="folder to store [CROPPED] png converted images")
+ap.add_argument("-s", "--size", required=False,
+                help="size of square path, 112 or 224")
 ap.add_argument("-o", "--outputpath", required=False,
                 help="folder to store png converted images")
 ap.add_argument("-n", "--nfiles", required=False,
@@ -103,6 +117,15 @@ if (args['file'].split('.')[-1] != 'csv'):
     print('Input must be csv file.')
     sys.exit()
 
+# select patch size
+if args['size'] is None or args['size'] == '224':
+    PATCH_SIZE = 224
+elif args['size'] == '112':
+    PATCH_SIZE = 112
+else:
+    PATCH_SIZE = int(args['size'])
+print(f'Using patch size: {PATCH_SIZE}')
+
 # get number of files to select n
 if args['nfiles'] is None:
     n_files = 0
@@ -117,18 +140,21 @@ if args['outputpath'] is None:
         os.makedirs(TEMP_DIR, exist_ok=False)
     save_path = TEMP_DIR
 else:
-    if not os.path.isdir(args['outputpath']):
+    if not os.path.isdir(args['outputpath']) and args['abnormality'] != 'a':
         print('Creating output path', args['path'])
         os.makedirs(args['outputpath'], exist_ok=False)
     save_path = args['outputpath']
 
-    if args['abnormality'] is not None:
+    if args['abnormality'] != 'a':
         # Cria subdiretorios adicionais se necessario
         os.makedirs(os.path.join(save_path, 'train', 'malign_patch',), exist_ok=True)
         os.makedirs(os.path.join(save_path, 'train', 'malign_bg',), exist_ok=True)
         os.makedirs(os.path.join(save_path, 'test' , 'malign_patch',), exist_ok=True)
         os.makedirs(os.path.join(save_path, 'test' , 'malign_bg',), exist_ok=True)
 
+# Here we need a temp dir
+if os.path.isdir('./temp') is False:
+    os.makedirs('./temp', exist_ok=False)
 
 if args['abnormality'] is not None:
     if args['abnormality'] == 'b':
@@ -137,13 +163,16 @@ if args['abnormality'] is not None:
     elif args['abnormality'] == 'm':
         abnormality = 'MALIGNANT'
         print('Selecting Malignant exams from file ', args['file'])
-else:
-    print('Abnormality must be b or m. None means using all files.')
-    print('Not creating dirs, all files in input dir')
-    abnormality = 'ALL'
-    # save_path += '_patch_SSL'
-    # if os.path.isdir(save_path) is False:
-    #     os.makedirs(save_path, exist_ok=False)
+    elif args['abnormality'] == 'a':
+        print('Selecting ALL exams from file ', args['file'])
+        abnormality = 'ALL'
+        save_path += '_patch_SSL'
+        if os.path.isdir(save_path) is False:
+            os.makedirs(save_path, exist_ok=False)
+    else:
+        print('Abnormality must be b, m or a')
+        sys.exit()
+
 
 # read to pandas frame
 df = pd.read_csv(args['file'])
@@ -163,33 +192,60 @@ start_time = time.time()
 # Following lines filter what we want. Hardcoded now- -CRIE SUA SELECAO AQUI
 count = 0
 for i in range(table.shape[0]):
-    if abnormality == 'MALIGNANT':
-        if table[i][9] != '[\'No Finding\']':
+    if TYPE == 'MAMMO':
+        if abnormality == 'MALIGNANT':
+            if table[i][9] != '[\'No Finding\']':
+                file_list.append({'dir': table[i][0], 'file': table[i][2],
+                                'birads': str(table[i][7])[-1],
+                                'density': table[i][8][-1],
+                                'side': table[i][3], 'view': table[i][4],
+                                'split': table[i][15],
+                                'short_case_id':  table[i][0][0:9],
+                                'category': table[i][9],
+                                'height': int(table[i][5]),
+                                'width': int(table[i][6]),
+                                'xmin': float(table[i][11]),
+                                'ymin': float(table[i][12]),
+                                'xmax': float(table[i][13]),
+                                'ymax': float(table[i][14]),
+                                'type': 'malign'})
+                count = count+1
+        if abnormality == 'ALL':
             file_list.append({'dir': table[i][0], 'file': table[i][2],
-                              'birads': str(table[i][7])[-1],
-                              'density': table[i][8][-1],
-                              'side': table[i][3], 'view': table[i][4],
-                              'split': table[i][15],
-                              'short_case_id':  table[i][0][0:9],
-                              'category': table[i][9],
-                              'height': int(table[i][5]),
-                              'width': int(table[i][6]),
-                              'xmin': float(table[i][11]),
-                              'ymin': float(table[i][12]),
-                              'xmax': float(table[i][13]),
-                              'ymax': float(table[i][14]),
-                              'type': 'malign'})
+                                'birads': str(table[i][7])[-1],
+                                'density': table[i][8][-1],
+                                'side': table[i][3], 'view': table[i][4],
+                                'split': table[i][9],
+                                'short_case_id':  table[i][0][0:9],
+                                'type': 'all'})
             count = count+1
-    if abnormality == 'ALL':
-        file_list.append({'dir': table[i][0], 'file': table[i][2],
-                            'birads': str(table[i][7])[-1],
-                            'density': table[i][8][-1],
-                            'side': table[i][3], 'view': table[i][4],
-                            'split': table[i][9],
-                            'short_case_id':  table[i][0][0:9],
-                            'type': 'all'})
-        count = count+1
-
+    elif TYPE == 'CHEST':               # all train here
+        if abnormality == 'MALIGNANT':
+            if table[i][1] != 'No finding':
+                file_list.append({'image_id': table[i][0],
+                                'class_name': table[i][1],
+                                'class_id': table[i][2],
+                                'rad_id': table[i][3],
+                                'xmin': float(table[i][4]),
+                                'ymin': float(table[i][5]),
+                                'xmax': float(table[i][6]),
+                                'ymax': float(table[i][7]),
+                                'type': 'malign'})
+                count = count+1
+        if abnormality == 'BENIGN':
+            if table[i][1] == 'No finding':
+                file_list.append({'image_id': table[i][0],
+                                'class_name': table[i][1],
+                                'class_id': table[i][2],
+                                'rad_id': table[i][3],
+                                'type': 'benign'})
+                count = count+1
+        if abnormality == 'ALL':
+            file_list.append({'image_id': table[i][0],
+                            'class_name': table[i][1],
+                            'class_id': table[i][2],
+                            'rad_id': table[i][3]})
+            count = count+1
 
 print('Current selection (all): ', count, len(file_list))
 
@@ -202,6 +258,9 @@ if len(file_list) < n_files:
     sys.exit()
 
 selection = list(range(0, n_files))
+random.shuffle(selection)     # shuffle the current folder order
+
+
 # print ("Selection of N samples: ", selection, len(selection))
 
 print('Converting masks to png: ', len(file_list))
@@ -272,26 +331,46 @@ def convert_one_image(sel, resize_expand=True):
 
 
 # Extract N patches for self supervised learning - no label
-def convert_one_image_self_sup(sel, resize_expand=True):
+# def convert_one_image_self_sup(sel, resize_expand=True):
+def convert_one_image_self_sup(sel, file_list=[], save_path='./', resize_expand=True):
     """ Convert image to dicom and extract patches """
 
-    image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
+    # image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
 
-    image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
-                 file_list[sel]['view']+'_B'+file_list[sel]['birads'] + \
-                 '_D'+file_list[sel]['density']+'.png'
+    # image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
+    #              file_list[sel]['view']+'_B'+file_list[sel]['birads'] + \
+    #              '_D'+file_list[sel]['density']+'.png'
+
+
+    side = None
+
+    if TYPE == 'MAMMO':
+        image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
+        # split = 'train' if file_list[sel]['split']=='training' else 'test'
+        # dir_destiny = os.path.join(save_path, split, file_list[sel]['type'])
+        image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
+                    file_list[sel]['view']+'_B'+file_list[sel]['birads'] + \
+                    '_D'+file_list[sel]['density']+'.png'
+        side = file_list[sel]['side']
+    elif TYPE == 'CHEST':
+        image_source = (os.path.join(TOP_VINDR, file_list[sel]['image_id']))+'.dicom'
+        image_name = file_list[sel]['image_id']+'.png'
+
 
     temp_image_path = os.path.join('./temp', image_name)
     dir_destiny_patch = save_path
 
     print(temp_image_path)
 
-    # We must make same process as image: save converted dicom then patch from it.
-    save_dicom_image_as_png(image_source, temp_image_path, file_list[sel]['side'] ,16)
-    if RESIZE_EXPAND_CHANNELS:
-        image = resize_expand_channels(temp_image_path, False)
+    try:
+        save_dicom_image_as_png(image_source, temp_image_path, side, 16)
+        if resize_expand:
+            image = resize_expand_channels(temp_image_path, False)
+    except:
+        print('Erro ao processar arquivo: ', image_source)
+        return
 
-    patch_size = 224
+    patch_size = PATCH_SIZE
     # vamos varrer imagem e pegar patches
     #  Overlap 50% (divide step by 2)
     #  Height is 1152, to use 5 patches we start from 16 and leave last 16 out
@@ -325,7 +404,8 @@ def convert_one_image_self_sup(sel, resize_expand=True):
 
 
 # f = partial(convert_one_image, resize_expand=RESIZE_EXPAND_CHANNELS)
-f = partial(convert_one_image_self_sup, resize_expand=RESIZE_EXPAND_CHANNELS)
+# f = partial(convert_one_image_self_sup, resize_expand=RESIZE_EXPAND_CHANNELS)
+f = partial(convert_one_image_self_sup, file_list=file_list, save_path=save_path, resize_expand=RESIZE_EXPAND_CHANNELS)
 p = Pool(NUM_PROCESSES)
 p.map(f, selection)
 

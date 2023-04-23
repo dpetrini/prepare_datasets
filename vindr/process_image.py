@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 
+DEBUG = False
+
 def data_preprocess(data, side):
 
     image = data.pixel_array
@@ -9,13 +11,16 @@ def data_preprocess(data, side):
     depth_stored = data.data_element('BitsStored').value
     photometricInterpretation = data.data_element('PhotometricInterpretation').value
 
-    if depth_allocated != 16 or depth_stored not in [12, 16]:
+    if depth_allocated != 16 or depth_stored not in [12, 14, 16]:
         print('Invalid depth: ', depth_allocated, depth_stored)
 
     # Monochrome1: minimum=white, so need to invert
     # https://dicom.innolitics.com/ciods/rt-dose/image-pixel/00280004
     if str(photometricInterpretation) == 'MONOCHROME1':
         image = np.invert(image)
+
+    if DEBUG:
+        print(depth_allocated, depth_stored, image.shape)
 
     min = image.min()
     max = image.max()
@@ -29,6 +34,8 @@ def data_preprocess(data, side):
         image[0:LIMIT_Y, 0:LIMIT_X] = min
     elif side == 'L':
         image[0:LIMIT_Y, (image.shape[1] - LIMIT_X):image.shape[1]] = min
+    else:
+        pass
 
     # Encontra limiar OTSU
     limiar, _ = cv2.threshold(image, 0, max, cv2.THRESH_OTSU)
