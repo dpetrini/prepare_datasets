@@ -52,7 +52,7 @@ def data_preprocess(data, side):
     idx = np.in1d(image_flat, rm)
     clean_array = image_flat[~idx]
 
-    # Obtain normal parameters and find the limits based in 3*sigma
+    # Obtain normal parameters and find the limits based in 4*sigma
     mu, sigma = np.mean(clean_array), np.std(clean_array)
     limite_inf = int(mu-n_sigma*sigma)
     limite_sup = int(mu+n_sigma*sigma)

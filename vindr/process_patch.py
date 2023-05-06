@@ -14,6 +14,54 @@ import cv2
 import numpy as np
 from random import randint
 
+DEFAULT_SIZE = (896, 1152)
+
+
+def extract_one_patches(img, x, y, w, h, ps=224, debug=False):
+
+    height = DEFAULT_SIZE[1]
+    width = DEFAULT_SIZE[0]
+
+    patch = np.zeros((ps, ps), np.uint16)
+
+    # fix lesion near border
+    filled_image_x = width - x
+    filled_image_y = height - y
+
+    if filled_image_y < ps:
+        print('\nY value bad, skipping\n', y, filled_image_y)
+        return [0]
+
+    if filled_image_x < ps:
+        print('.')
+        patch[:, 0:filled_image_x] = img[y:y+ps, x:x+ps]
+    else:
+        patch = img[y:y+ps, x:x+ps]
+
+    
+    limiar, _ = cv2.threshold(patch, 0, img.max(), cv2.THRESH_OTSU)
+
+    if patch.shape[0] != ps or patch.shape[1] != ps:
+        print('Wrong size PATCH, maybe border, skipping ', patch.shape, x, y)
+        return [0]
+
+    if w > ps or h > ps:
+        print('\t Sizes bigger than patch size w, h, ps: ', w, h, ps)
+
+    if debug:
+        print(y, x, ps, np.sum(patch)/(ps*ps), limiar)
+        cv2.imshow('Real Patch', patch)
+        cv2.waitKey(0)
+
+    return patch
+
+    # Dont't patch from safe area and avoid all black areas
+    if (limiar > 1):
+        return patch
+    else:
+        print('\t Below Limiar Patch!')
+        return [0]
+
 
 def extract_s10_patches(img, mask, x, y, w, h, N=10, ps=224, debug=False):
     """
