@@ -180,3 +180,56 @@ def extract_bg_patches(img, mask, N=10, ps=224, limit=0):
             if valid_patches == n_bg_patches:
                 break
     return patch_list
+
+
+def extract_bg_patches_v2(img, mask, N=10, ps=224):
+    """
+    Extract N random patches from img background. 
+    Excluding area used for lesion patches and total black areas.
+    
+    V2: Blackness threshold BASED IN OTSU criteria - dinaminc limit
+    
+    Args:
+        img: the full image in final resolution
+        mask: the binary mask containing "forbidden" region
+        N: number of lesion patches to extract.
+        ps: size of patch to extract.
+        limit: a minimum number of pixels to consider region not all black
+    Returns:
+        patch_list: list of N extracted patches
+        mask_list: list of N binary mask of extracted patches
+                   None if no input binary mask
+        mask_bg: binary mask containing annotation of extracted patches
+    """
+    h_img, w_img = img.shape[0:2]
+    n_bg_patches = N
+    valid_patches = 0
+    patch_list = []
+
+    max_patches_image = int (((h_img/ps) * (w_img/ps)) * 1.5)  # constant = safety
+
+    over_limit = 0
+
+    # keep trying to patch from image considering conditions
+    while (True):
+        x = randint(0, w_img-ps-1)
+        y = randint(0, h_img-ps-1)
+        bg = img[y:y+ps, x:x+ps]
+        # bg_mask = mask[y:y+ps, x:x+ps]    # not handling masks now
+
+        over_limit += 1
+
+        # Dont't patch from safe area and avoid all black areas
+        limiar, _ = cv2.threshold(bg, 0, bg.max(), cv2.THRESH_OTSU)
+        
+        if (limiar > 1): 
+            valid_patches += 1
+            patch_list.append(bg)
+            if valid_patches == n_bg_patches:
+                break
+        
+        if over_limit > max_patches_image:
+            print('\tLeaving by over limit - no enough BG patches within Blackness limit. Len patch list:', len(patch_list))
+            break
+
+    return patch_list

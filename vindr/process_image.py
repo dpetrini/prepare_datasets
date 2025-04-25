@@ -3,13 +3,18 @@ import cv2
 
 DEBUG = False
 
-def data_preprocess(data, side):
+def data_preprocess(data, side, debug=False):
 
     image = data.pixel_array
 
     depth_allocated = data.data_element('BitsAllocated').value
     depth_stored = data.data_element('BitsStored').value
     photometricInterpretation = data.data_element('PhotometricInterpretation').value
+
+    if debug:
+        rows = data.data_element('Rows').value
+        columns = data.data_element('Columns').value
+        print(f'Dicom Resolution: {columns}x{rows}, Depth: {depth_stored} bits')
 
     if depth_allocated != 16 or depth_stored not in [12, 14, 16]:
         print('Invalid depth: ', depth_allocated, depth_stored)
@@ -52,7 +57,7 @@ def data_preprocess(data, side):
     idx = np.in1d(image_flat, rm)
     clean_array = image_flat[~idx]
 
-    # Obtain normal parameters and find the limits based in 4*sigma
+    # Obtain normal parameters and find the limits based in 4'.*sigma
     mu, sigma = np.mean(clean_array), np.std(clean_array)
     limite_inf = int(mu-n_sigma*sigma)
     limite_sup = int(mu+n_sigma*sigma)

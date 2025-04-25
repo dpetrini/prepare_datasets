@@ -16,7 +16,7 @@
 #   python3 vindr_select_data_patch.py -f './csv/vindr-mammo/train.csv' -a a -o './data-vindr-patch' -n 50
 #
 #   - For SSL - now supporting different patch size
-#    python3 vindr_select_data_patch.py -f './csv/vindr-mammo/finding_annotations.csv' -o './data-vindr' -a a -s 112 -n 50
+#    python3 vindr_select_data_patch.py -f './csv/vindr-mammo/finding_annotations.csv' -o './data-vindr' -a a -s 112 -n 50 -l m
 #
 #   - To generate Birads based patches based in patch annotation csv (Apr-2023)
 #    python3 vindr_select_data_patch.py -f './csv/vindr-mammo/finding_annotations.csv' -o './data-vindr-mult' -a m -s 224 -n 0
@@ -39,18 +39,20 @@ import os
 import cv2
 import time
 
-from process_patch import extract_s10_patches, extract_bg_patches, extract_one_patches
+from process_patch import extract_s10_patches, extract_bg_patches, extract_one_patches, extract_bg_patches_v2
 from vindr_select_data import save_dicom_image_as_png
+from display import show_list_image
 
-SUPERVISED = False        # SUPERVISED, false == SELF_SUPERVISED
-PATCH_TYPE = 'single'   #  'single' or 's10'
+
+PATCH_TYPE = 's10'   #  'single' (VINDR BIRADS) or 's10'
 
 # for multiprocess
-NUM_PROCESSES = 6          # 4 funcionou bem, talvez 6 se desligar browser
+NUM_PROCESSES = 6           # 4 funcionou bem, talvez 6 se desligar browser
 DEFAULT_SIZE = (896, 1152)
 
-RESIZE_EXPAND_CHANNELS = True
-NON_BLACK_LIMIT = 0  # 1000 # limite superior de pixels pretos para background
+EXPAND_CHANNELS = False
+
+SEPARATE_DEPTH = False      # Wether or not to separate 12 and 16 bits according to dicom depth
 
 TYPE = 'MAMMO'  # 'CHEST' 'MAMMO' 
 
@@ -120,6 +122,9 @@ ap.add_argument("-n", "--nfiles", required=False,
                 help="number of files to generate. Zero means all.")
 ap.add_argument("-a", "--abnormality", required=False,
                 help="abnormality type b: benign, m: malignant")
+ap.add_argument("-l", "--learning", required=False,
+                help="learning mode: s: supervised, m: self supervised")
+
 
 args = vars(ap.parse_args())
 
@@ -157,25 +162,40 @@ else:
         os.makedirs(args['outputpath'], exist_ok=False)
     save_path = args['outputpath']
 
+    # IN VINDR CASE we get all but 'no findings'
+
     if args['abnormality'] != 'a' and PATCH_TYPE == 's10':
         # Cria subdiretorios adicionais se necessario
-        os.makedirs(os.path.join(save_path, 'train', 'malign_patch',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'train', 'malign_bg',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'test' , 'malign_patch',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'test' , 'malign_bg',), exist_ok=True)
+        for type in ['train','val','test']:
+            for malign in ['malign_patch','malign_bg']:
+                os.makedirs(os.path.join(save_path, type, malign), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'malign_patch',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'malign_bg',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'test' , 'malign_patch',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'test' , 'malign_bg',), exist_ok=True)
     elif args['abnormality'] != 'a' and PATCH_TYPE == 'single':     # Then use BIRADS
-        os.makedirs(os.path.join(save_path, 'train', 'B3',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'train', 'B4',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'train', 'B5',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'train', 'bg',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'val', 'B3',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'val', 'B4',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'val', 'B5',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'val', 'bg',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'test' , 'B3',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'test' , 'B4',), exist_ok=True)
-        os.makedirs(os.path.join(save_path, 'test' , 'B5',), exist_ok=True) 
-        os.makedirs(os.path.join(save_path, 'test' , 'bg',), exist_ok=True)
+        for type in ['train','val','test']:
+            for birads in ['B3','B4','B5','bg']:
+                os.makedirs(os.path.join(save_path, type, birads), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'B3',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'B4',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'B5',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'train', 'bg',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'val', 'B3',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'val', 'B4',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'val', 'B5',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'val', 'bg',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'test' , 'B3',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'test' , 'B4',), exist_ok=True)
+        # os.makedirs(os.path.join(save_path, 'test' , 'B5',), exist_ok=True) 
+        # os.makedirs(os.path.join(save_path, 'test' , 'bg',), exist_ok=True)
+
+# Type of learning SSL or Supervised (label ==  BIRADS)
+if args['learning'] == 'm':
+    SUPERVISED = False
+else:
+    SUPERVISED = True
+
 
 # Here we need a temp dir
 if os.path.isdir('./temp') is False:
@@ -191,7 +211,7 @@ if args['abnormality'] is not None:
     elif args['abnormality'] == 'a':
         print('Selecting ALL exams from file ', args['file'])
         abnormality = 'ALL'
-        save_path += '_patch_SSL'
+        save_path += '_' + str(PATCH_SIZE) +'_patch_SSL'
         if os.path.isdir(save_path) is False:
             os.makedirs(save_path, exist_ok=False)
     else:
@@ -294,7 +314,7 @@ print('Converting masks to png: ', len(file_list))
 
 debug = False
 
-# Function below for S10 Sinai-paper like patches
+# Function below for S10 Sinai-paper like patches SUPERVISED
 def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True, type='s10', counter_train=1, counter_all=1):
     """ Convert image to dicom and extract patches """
 
@@ -304,11 +324,11 @@ def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True, typ
     split = 'train' if file_list[sel]['split']=='training' else 'test'
 
     increment_counter(counter_all)
-    print(counter_all.value)
+    print(counter_all.value, '\t', end='')
 
     if split == 'train':
         increment_counter(counter_train)
-        print(counter_train.value)
+        #print(counter_train.value)
         if counter_train.value % 10 == 0:
             split = 'val'
 
@@ -342,7 +362,7 @@ def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True, typ
     try:
         save_dicom_image_as_png(image_source, temp_image_path, file_list[sel]['side'] ,16)
         if resize_expand:
-            image = resize_expand_channels(temp_image_path, False)
+            image = resize_expand_channels(temp_image_path, EXPAND_CHANNELS)
     except:
         print('Erro ao processar arquivo: ', image_source)
         return
@@ -385,7 +405,8 @@ def convert_one_image(sel, file_list=[], save_path='./', resize_expand=True, typ
             cv2.imwrite(os.path.join(dir_destiny_mask, image_name.split('.')[0]+'_mask_patch_s10_'+str(i)+'.png'), m)
 
     if True:  #type == 's10':
-        bg_list = extract_bg_patches(image, mask_bg, limit=NON_BLACK_LIMIT)
+        # bg_list = extract_bg_patches(image, mask_bg)
+        bg_list = extract_bg_patches_v2(image, mask_bg)
 
         for i, bg in enumerate(bg_list):
             cv2.imwrite(os.path.join(dir_destiny_bg, image_name.split('.')[0]+'_patch_bg_s10'+sufix+str(i)+'.png'), bg)
@@ -402,8 +423,6 @@ def convert_one_image_self_sup(sel, file_list=[], save_path='./', resize_expand=
 
     if TYPE == 'MAMMO':
         image_source = (os.path.join(TOP_VINDR, file_list[sel]['dir'], file_list[sel]['file']))+'.dicom'
-        # split = 'train' if file_list[sel]['split']=='training' else 'test'
-        # dir_destiny = os.path.join(save_path, split, file_list[sel]['type'])
         image_name = file_list[sel]['short_case_id']+'_'+file_list[sel]['side']+'_'+ \
                     file_list[sel]['view']+'_B'+file_list[sel]['birads'] + \
                     '_D'+file_list[sel]['density']+'.png'
@@ -419,12 +438,19 @@ def convert_one_image_self_sup(sel, file_list=[], save_path='./', resize_expand=
     print(temp_image_path)
 
     try:
-        save_dicom_image_as_png(image_source, temp_image_path, side, 16)
-        if resize_expand:
-            image = resize_expand_channels(temp_image_path, False)
+        dicom_depth = save_dicom_image_as_png(image_source, temp_image_path, side, 16, False)
+        image = resize_expand_channels(temp_image_path, EXPAND_CHANNELS)
     except:
         print('Erro ao processar arquivo: ', image_source)
         return
+    
+    # cv2.imshow('Image', image)
+    # cv2.waitKey(0)
+    
+    if SEPARATE_DEPTH:
+        # Lets separate 12 bits and 16 bits images as they have different means
+        dir_destiny_patch = os.path.join(dir_destiny_patch, str(dicom_depth))
+    print(dir_destiny_patch)
 
     patch_size = PATCH_SIZE
     # vamos varrer imagem e pegar patches
@@ -452,24 +478,51 @@ def convert_one_image_self_sup(sel, file_list=[], save_path='./', resize_expand=
 
             # Avoid all black areas
             # Threshold: very objective, if zero no tissue. 
-            # std(patch) > 1000, by visual inspection (if less: very very few tissue, if any)
+            # std(patch) > 3000, by visual inspection - we want good part of image w/ tissue
             # mean(patch) > 15000, higher means are bright tissue that can have thin std
             # ==> Criteria checked by visual inspection in 06-05-2023.
             # ==> Objective: prevent too dark patches that overflows in augmentation.
-            if (limiar > 1) and ( (np.std(patch) > 1000)  or  (np.mean(patch) > 15000) ):
+            #
+            # ATTENTION: This criteria only works for 12 bits imagem  #################
+            #            Check (*) below to handle
+            #
+            if (limiar > 1) and ( (np.std(patch) > 3000)  or  (np.mean(patch) > 15000) ):
             # if (limiar > 1):
                 valid_patches += 1
                 patch_list.append(patch)
 
-    # Subsample list take 20% elements, one each five
-    patch_list = patch_list[::5]
+    # print('BEFORE: ', len(patch_list))
+
+    # (*)
+    # There is no black filter for 16 bit images
+    # so they come with much more patches. So we resample before
+    # to keep reasonable amount, in the end.
+    if dicom_depth == 16:
+        patch_list = patch_list[::2]
+        # print('BEFORE (16bits): ', len(patch_list))
+
+    # RESAMPLE ##############################################
+    # Take all means
+    means = [int(i.mean()) for i in patch_list]
+    # sort decreasing
+    m_index = np.argsort(means)[::-1]
+    # reorder list by mean (amount of tissue)
+    patch_list = [patch_list[i] for i in m_index]
+
+    # Subsample list take 25% elements, one each four 
+    # patch_list = patch_list[::5] # OLD => to much black areas from breast borders
+    patch_list = patch_list[0:int(len(patch_list)*0.75):3]
+
+    # print('AFTER: ', len(patch_list))
+
+    # show_list_image(patch_list, f'Depth: {dicom_depth} bits, Size: {PATCH_SIZE}')
 
     for i, p in enumerate(patch_list):
         cv2.imwrite(os.path.join(dir_destiny_patch, image_name.split('.')[0]+'_patch_self'+str(i)+'.png'), p)
 
 
-# f = partial(convert_one_image, resize_expand=RESIZE_EXPAND_CHANNELS)
-# f = partial(convert_one_image_self_sup, resize_expand=RESIZE_EXPAND_CHANNELS)
+# f = partial(convert_one_image, resize_expand=EXPAND_CHANNELS)
+# f = partial(convert_one_image_self_sup, resize_expand=EXPAND_CHANNELS)
 
 p = multiprocessing.Pool(NUM_PROCESSES)
 manager = multiprocessing.Manager()
@@ -477,16 +530,16 @@ counter_all = manager.Value('i', 0)  # create a shared counter variable
 counter_train = manager.Value('i', 0)  # create a shared counter variable
 
 if SUPERVISED:
-    f = partial(convert_one_image, file_list=file_list, save_path=save_path, resize_expand=RESIZE_EXPAND_CHANNELS, type=PATCH_TYPE, counter_train=counter_train, counter_all=counter_all)
+    f = partial(convert_one_image, file_list=file_list, save_path=save_path, resize_expand=EXPAND_CHANNELS, type=PATCH_TYPE, counter_train=counter_train, counter_all=counter_all)
 else:       # SELF_SUPERVISED:
-    f = partial(convert_one_image_self_sup, file_list=file_list, save_path=save_path, resize_expand=RESIZE_EXPAND_CHANNELS, counter_all=counter_all)
+    f = partial(convert_one_image_self_sup, file_list=file_list, save_path=save_path, resize_expand=EXPAND_CHANNELS, counter_all=counter_all)
 
 p.map(f, selection)
 
 p.close()
 p.join()
 
-print("Counter All value: ", counter_all.value)
+print("Processed files: ", counter_all.value)
 if SUPERVISED:
     print("Counter Train value: ", counter_train.value)
 

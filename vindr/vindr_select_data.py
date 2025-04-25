@@ -53,7 +53,7 @@ DEFAULT_SIZE = (896, 1152)
 RESIZE_EXPAND_CHANNELS = True
 
 
-def save_dicom_image_as_png(dicom_filename, png_filename, side, bitdepth=12):
+def save_dicom_image_as_png(dicom_filename, png_filename, side, bitdepth=12, debug=False):
     """
     :param dicom_filename: path to input dicom file.
     Save 12-bit mammogram from dicom as rescaled 16-bit png file.
@@ -63,13 +63,14 @@ def save_dicom_image_as_png(dicom_filename, png_filename, side, bitdepth=12):
     data = pydicom.read_file(dicom_filename)
 
     # Pre-processamento da imagem # (vide notebook process.ipynb) *************
-    image, depth_stored = data_preprocess(data, side)
+    image, depth_stored = data_preprocess(data, side, debug)
  
     # Salva PNG conforme numero de bits lido (default compression=None)
     with open(png_filename, 'wb') as f:
         writer = png.Writer(height=image.shape[0], width=image.shape[1], bitdepth=int(depth_stored), greyscale=True)
         writer.write(f, image.tolist())
 
+    return depth_stored
 
 # Moved functions below from middle o file to here
 def resize_expand_channels(img_file, expand=True):
